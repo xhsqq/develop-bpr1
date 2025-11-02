@@ -105,15 +105,34 @@ python scripts/extract_image_features.py --category beauty --data_dir data/proce
 python train.py --config config.yaml
 ```
 
-#### 方式2: 一键运行完整流程 ⭐ 支持多数据集
+#### 方式2: 一键运行完整流程 ⭐ 全自动智能流程
+
+**完整参数:**
 ```bash
-# 处理所有数据集（beauty, games, sports）
+bash scripts/run_full_pipeline.sh [category] [batch_size] [epochs] [device]
+```
+
+**新功能:**
+- ✅ 智能跳过：自动检测已完成的步骤，跳过无需重复执行的任务
+- ✅ 多参数支持：category, batch_size, epochs, device
+- ✅ 帮助文档：`--help` 查看详细说明
+- ✅ 进度展示：清晰的步骤编号和彩色输出
+- ✅ 错误处理：友好的错误提示和安装建议
+- ✅ 结果展示：自动生成详细报告和文件清单
+
+**使用示例:**
+```bash
+# 使用默认参数（beauty, 256, 50, auto）
+bash scripts/run_full_pipeline.sh
+
+# 处理所有数据集
 bash scripts/run_full_pipeline.sh all
 
-# 处理单个数据集
-bash scripts/run_full_pipeline.sh beauty
-bash scripts/run_full_pipeline.sh games
-bash scripts/run_full_pipeline.sh sports
+# 自定义参数
+bash scripts/run_full_pipeline.sh beauty 128 100 cuda
+
+# 查看帮助
+bash scripts/run_full_pipeline.sh --help
 ```
 
 #### 方式3: 命令行参数
@@ -141,25 +160,51 @@ python train.py --mode eval --checkpoint path/to/checkpoint.pth
 
 ## 📊 消融实验
 
-运行完整的消融实验来验证各个模块的贡献 ⭐ 支持多数据集：
+验证各模块的贡献 ⭐ 全自动智能实验流程
 
+**完整参数:**
 ```bash
-# 在beauty数据集上运行消融实验
-bash scripts/run_ablation_study.sh beauty
-
-# 在games数据集上运行消融实验
-bash scripts/run_ablation_study.sh games
-
-# 在sports数据集上运行消融实验
-bash scripts/run_ablation_study.sh sports
+bash scripts/run_ablation_study.sh [category] [batch_size] [epochs] [device] [--quick]
 ```
 
-这将自动运行以下实验：
-1. **完整模型** - 所有改进启用
-2. **无解耦融合** - 移除维度特定融合
-3. **无量子编码** - 移除量子编码器
-4. **无因果推断** - 移除SCM
+**新功能:**
+- ✅ 多参数支持：category, batch_size, epochs, device
+- ✅ 快速模式：`--quick` 只运行3个关键实验（~1-2小时）
+- ✅ 智能跳过：检测已完成的实验，支持断点续跑
+- ✅ 实时进度：[实验 1/5] + 彩色输出 + 实时结果展示
+- ✅ 自动报告：生成Markdown表格 + 可视化脚本
+- ✅ 时间预估：显示预计耗时和实际用时
+
+**使用示例:**
+```bash
+# 默认参数（beauty, 256, 30, auto）
+bash scripts/run_ablation_study.sh
+
+# 指定数据集
+bash scripts/run_ablation_study.sh beauty
+
+# 自定义参数
+bash scripts/run_ablation_study.sh beauty 128 50 cuda
+
+# 快速模式（只运行3个实验）
+bash scripts/run_ablation_study.sh beauty 256 20 auto --quick
+
+# 查看帮助
+bash scripts/run_ablation_study.sh --help
+```
+
+**消融实验列表:**
+1. **完整模型** - 所有改进启用（baseline）
+2. **无维度融合** - 移除维度特定多模态融合
+3. **无量子编码** - 16态→4态，移除量子优化
+4. **无SCM因果** - 移除因果推断模块
 5. **基线模型** - 所有改进禁用
+
+**自动生成:**
+- 📄 汇总报告（txt）
+- 📊 Markdown表格（直接用于论文）
+- 📈 可视化脚本（Python）
+- 📉 对比图表（PNG，300 DPI）
 
 ---
 
