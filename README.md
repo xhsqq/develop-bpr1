@@ -77,15 +77,25 @@ pip install -r requirements.txt
 
 ### 2. 数据准备
 
+⭐ **支持三个Amazon数据集**: Beauty, Games, Sports
+
 ```bash
-# 下载Amazon Fashion数据集
-python data/download_amazon.py
+# 方式1: 下载所有数据集
+python data/download_amazon.py --category all
+
+# 方式2: 下载单个数据集
+python data/download_amazon.py --category beauty
+python data/download_amazon.py --category games
+python data/download_amazon.py --category sports
+
+# 预处理数据
+python data/preprocess_amazon.py --category all --raw_dir data/raw --processed_dir data/processed
 
 # 提取文本特征（BERT）
-python scripts/extract_text_features.py --data_dir data/raw --output_dir data/features
+python scripts/extract_text_features.py --category beauty --data_dir data/processed
 
 # 提取图像特征（ResNet）
-python scripts/extract_image_features.py --data_dir data/raw --output_dir data/features
+python scripts/extract_image_features.py --category beauty --data_dir data/processed
 ```
 
 ### 3. 训练模型
@@ -95,9 +105,15 @@ python scripts/extract_image_features.py --data_dir data/raw --output_dir data/f
 python train.py --config config.yaml
 ```
 
-#### 方式2: 一键运行完整流程
+#### 方式2: 一键运行完整流程 ⭐ 支持多数据集
 ```bash
-bash scripts/run_full_pipeline.sh
+# 处理所有数据集（beauty, games, sports）
+bash scripts/run_full_pipeline.sh all
+
+# 处理单个数据集
+bash scripts/run_full_pipeline.sh beauty
+bash scripts/run_full_pipeline.sh games
+bash scripts/run_full_pipeline.sh sports
 ```
 
 #### 方式3: 命令行参数
@@ -125,10 +141,17 @@ python train.py --mode eval --checkpoint path/to/checkpoint.pth
 
 ## 📊 消融实验
 
-运行完整的消融实验来验证各个模块的贡献：
+运行完整的消融实验来验证各个模块的贡献 ⭐ 支持多数据集：
 
 ```bash
-bash scripts/run_ablation_study.sh
+# 在beauty数据集上运行消融实验
+bash scripts/run_ablation_study.sh beauty
+
+# 在games数据集上运行消融实验
+bash scripts/run_ablation_study.sh games
+
+# 在sports数据集上运行消融实验
+bash scripts/run_ablation_study.sh sports
 ```
 
 这将自动运行以下实验：
@@ -148,6 +171,7 @@ bash scripts/run_ablation_study.sh
 
 | 参数 | 默认值 | 说明 |
 |-----|-------|------|
+| `data.category` | beauty | ⭐ 数据集类别 (beauty/games/sports) |
 | `disentangled_dim` | 64 | 每个解耦维度的大小 |
 | `num_interests` | 16 | 量子态数量（⭐ 已优化） |
 | `alpha_causal` | 0.2 | 因果损失权重 |

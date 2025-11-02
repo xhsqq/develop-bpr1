@@ -5,10 +5,17 @@
 
 # ============ 数据配置 ============
 data:
-  data_dir: "data/features"           # 特征数据目录
-  train_file: "train.pkl"             # 训练数据
-  val_file: "val.pkl"                 # 验证数据
-  test_file: "test.pkl"               # 测试数据
+  # ⭐ 数据集选择（可选：beauty, games, sports）
+  category: "beauty"                  # Amazon数据集类别
+
+  # 数据目录
+  raw_dir: "data/raw"                 # 原始数据目录
+  processed_dir: "data/processed"     # 预处理后数据目录
+
+  data_dir: "data/features"           # 特征数据目录（已废弃，保留兼容性）
+  train_file: "train.pkl"             # 训练数据（已废弃）
+  val_file: "val.pkl"                 # 验证数据（已废弃）
+  test_file: "test.pkl"               # 测试数据（已废弃）
 
   # 数据加载
   batch_size: 256                     # 批大小
@@ -19,6 +26,9 @@ data:
   # 序列配置
   max_seq_length: 50                  # 最大序列长度
   min_seq_length: 2                   # 最小序列长度
+
+  # K-core过滤
+  min_interactions: 5                 # 最小交互次数（用于k-core过滤）
 
 # ============ 模型架构 ============
 model:

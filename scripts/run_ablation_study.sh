@@ -37,11 +37,18 @@ print_header() {
 # 配置参数
 # ============================================
 
+# ⭐ 数据集类别（可选：beauty, games, sports）
+CATEGORY="${1:-beauty}"  # 默认使用beauty数据集
+
 # 基础配置
 BASE_CONFIG="config.yaml"
-DATA_DIR="data/features"
-CHECKPOINT_DIR="checkpoints"
-RESULTS_DIR="ablation_results"
+DATA_DIR="data/processed/${CATEGORY}"
+CHECKPOINT_DIR="checkpoints/${CATEGORY}_ablation"
+RESULTS_DIR="ablation_results/${CATEGORY}"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}消融实验 - 数据集: ${CATEGORY}${NC}"
+echo -e "${BLUE}========================================${NC}"
 
 # GPU配置
 GPU_ID=0
@@ -111,6 +118,7 @@ run_experiment() {
     print_msg "开始训练..."
     python train.py \
         --config ${BASE_CONFIG} \
+        --category ${CATEGORY} \
         --data_dir ${DATA_DIR} \
         --checkpoint_dir ${exp_dir}/checkpoints \
         --log_dir ${exp_dir}/logs \
@@ -137,6 +145,7 @@ run_experiment() {
     print_msg "评估模型..."
     python train.py \
         --config ${BASE_CONFIG} \
+        --category ${CATEGORY} \
         --mode eval \
         --checkpoint ${checkpoint} \
         --gpu_ids ${GPU_ID} \
