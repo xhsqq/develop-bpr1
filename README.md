@@ -105,15 +105,34 @@ python scripts/extract_image_features.py --category beauty --data_dir data/proce
 python train.py --config config.yaml
 ```
 
-#### 方式2: 一键运行完整流程 ⭐ 支持多数据集
+#### 方式2: 一键运行完整流程 ⭐ 全自动智能流程
+
+**完整参数:**
 ```bash
-# 处理所有数据集（beauty, games, sports）
+bash scripts/run_full_pipeline.sh [category] [batch_size] [epochs] [device]
+```
+
+**新功能:**
+- ✅ 智能跳过：自动检测已完成的步骤，跳过无需重复执行的任务
+- ✅ 多参数支持：category, batch_size, epochs, device
+- ✅ 帮助文档：`--help` 查看详细说明
+- ✅ 进度展示：清晰的步骤编号和彩色输出
+- ✅ 错误处理：友好的错误提示和安装建议
+- ✅ 结果展示：自动生成详细报告和文件清单
+
+**使用示例:**
+```bash
+# 使用默认参数（beauty, 256, 50, auto）
+bash scripts/run_full_pipeline.sh
+
+# 处理所有数据集
 bash scripts/run_full_pipeline.sh all
 
-# 处理单个数据集
-bash scripts/run_full_pipeline.sh beauty
-bash scripts/run_full_pipeline.sh games
-bash scripts/run_full_pipeline.sh sports
+# 自定义参数
+bash scripts/run_full_pipeline.sh beauty 128 100 cuda
+
+# 查看帮助
+bash scripts/run_full_pipeline.sh --help
 ```
 
 #### 方式3: 命令行参数
