@@ -1,0 +1,99 @@
+# ⭐⭐⭐ BPR损失优化配置 ⭐⭐⭐
+#
+# 核心改进:
+#   1. 使用BPR损失代替交叉熵（更适合Top-K推荐）
+#   2. 大幅降低辅助损失权重（专注推荐任务）
+#   3. 提高学习率（BPR收敛更快）
+#   4. 保留三大创新模块（量子算法100%保留）
+
+model:
+  # Architecture
+  modality_dims:
+    text: 768
+    image: 2048
+  
+  hidden_dim: 256
+  item_embed_dim: 128
+  
+  # ==================== 三大创新 ====================
+  # 创新1: 解耦表征
+  disentangled_dim: 64
+  num_disentangled_dims: 3
+  
+  # 创新2: 量子多兴趣（硬性要求）✅
+  num_interests: 4
+  quantum_state_dim: 128
+  use_quantum_computing: false
+  
+  # 创新3: 因果推断（通过权重控制）
+  
+  # ==================== 损失权重（BPR优化）====================
+  # BPR是主损失，辅助损失极度弱化
+  alpha_recon: 0.005       # ⭐ 从0.1降到0.005 (20倍)
+  alpha_causal: 0.001      # ⭐ 从0.2降到0.001 (200倍)
+  alpha_diversity: 0.0005  # ⭐ 从0.05降到0.0005 (100倍)
+  alpha_orthogonality: 0.0005  # ⭐ 从0.05降到0.0005 (100倍)
+
+# Training - BPR优化配置
+training:
+  batch_size: 256          # ⭐ 从512降到256（BPR对batch size更敏感）
+  epochs: 50
+  learning_rate: 0.001     # ⭐ 提高到1e-3（BPR收敛更快）
+  warmup_epochs: 3         # ⭐ 减少到3（BPR不需要长warmup）
+  weight_decay: 0.00001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  gradient_clip: 1.0       # ⭐ 恢复到1.0（BPR梯度更稳定）
+  
+  early_stopping:
+    patience: 10
+    min_delta: 0.001
+  
+  dropout: 0.1
+
+# Data
+data:
+  category: "beauty"
+  data_dir: "data/processed"
+  max_seq_length: 50
+  num_workers: 8
+  use_text_features: true   # ⭐ 保留文本特征
+  filter_train_items: true
+
+# Evaluation
+evaluation:
+  eval_batch_size: 512
+  eval_every: 1
+  save_best: true
+  metrics:
+    - "HR@5"
+    - "HR@10"
+    - "HR@20"
+    - "NDCG@10"
+    - "MRR"
+  main_metric: "NDCG@10"
+
+# Logging
+logging:
+  log_dir: "logs"
+  tensorboard: true
+  wandb: false
+  log_every: 50
+
+# ==================== BPR配置说明 ====================
+# 
+# 🎯 为什么BPR更好？
+#   1. 直接优化排序：pos_score > neg_score
+#   2. 更符合推荐场景：用户点击=正样本，未点击=负样本
+#   3. 收敛更快：只关注正负样本对比，不关心全库概率
+#
+# 📊 预期效果:
+#   - rec_loss会更小（0.5-2.0，不是8.0+）
+#   - HR@10提升更明显（应该能到0.04-0.06）
+#   - 训练速度略慢（负采样开销）
+#
+# ⚠️ 注意事项:
+#   - BPR loss范围: 0.5-2.0（正常）
+#   - 不要和交叉熵loss (8-9)对比
+#   - 关注HR@10和NDCG@10的绝对值提升
+

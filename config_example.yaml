@@ -1,0 +1,199 @@
+# Example Configuration for Multimodal Sequential Recommender
+# 多模态序列推荐系统配置示例
+# 版本: v0.3.0 (支持TensorBoard、YAML配置、消融实验)
+
+# Model Architecture
+model:
+  # Disentangled Representation
+  disentangled_dim: 64          # 解耦表征维度 (推荐: 64-128)
+  num_disentangled_dims: 3      # 解耦维度数量: 功能、美学、情感
+
+  # Quantum-Inspired Encoder
+  num_interests: 4              # 用户兴趣数量 (推荐: 4-8)
+  quantum_state_dim: 128        # 量子态维度 (推荐: 128-256)
+  use_quantum_computing: false  # 是否使用真实量子计算 (需要 qiskit/pennylane)
+
+  # General
+  hidden_dim: 256               # 隐藏层维度 (推荐: 256-512)
+  item_embed_dim: 128           # 物品嵌入维度 (推荐: 128-256)
+  max_seq_length: 50            # 最大序列长度
+  dropout: 0.1                  # Dropout比率
+
+# Multimodal Features (标准配置: 文本 + 图像)
+modalities:
+  text:
+    dim: 768                      # BERT-base / RoBERTa-base 维度
+    encoder: "bert-base-uncased"  # 可选: roberta-base, distilbert-base
+    source: "title + description"
+    extraction_script: "scripts/extract_text_features.py"
+    note: "优先使用预计算特征 (text_features.pkl)"
+
+  image:
+    dim: 2048                     # ResNet50 维度 (ResNet101: 2048)
+    encoder: "resnet50"           # 可选: resnet101, vit-base-patch16
+    source: "product images"
+    extraction_script: "scripts/extract_image_features.py"
+    note: "优先使用预计算特征 (image_features.pkl)"
+
+# Training
+training:
+  batch_size: 512             # 批次大小 (推荐: 128-512，取决于GPU内存)
+  epochs: 50                  # 训练轮数 (早停机制会自动终止)
+  learning_rate: 0.0005       # 初始学习率 ⭐ 降低到5e-4，防止NaN
+  warmup_epochs: 5            # Warmup轮数 ⭐ 增加到5个epoch，更平滑
+  weight_decay: 0.00001       # 权重衰减 (L2正则化) ⭐ 降低到1e-5
+  eval_interval: 1            # 每N个epoch评估一次
+  
+  # Loss weights (v0.8.1 - 平衡方案) ⭐⭐⭐
+  # 核心改进:
+  #   1. rec_loss占90-95% (主导但不压倒)
+  #   2. 辅助损失仍有5-10%贡献 (帮助模型学习)
+  #   3. 修复diversity_loss负数问题
+  #   4. 添加Label Smoothing (0.1)
+  loss_weights:
+    recon: 0.1                # 解耦表征损失 ⭐ 从0.5降到0.1
+    causal: 0.2               # 因果推断损失 ⭐ 从0.5降到0.2
+    diversity: 0.05           # 多样性损失 (保持不变)
+    orthogonality: 0.05       # 正交性损失 ⭐ 从0.1降到0.05
+
+  # Optimization (自动应用)
+  optimizer: "adamw"          # AdamW优化器
+  scheduler: "cosine"         # Cosine Annealing调度器 ⭐ 自动应用
+  gradient_clip: 1.0          # 梯度裁剪 ⭐ 自动应用
+  early_stopping:             # 早停机制 ⭐ 自动应用
+    patience: 10              # 容忍10个评估周期无改进
+    min_delta: 0.001          # 最小改进幅度 (0.1%)
+  
+  # Regularization
+  dropout: 0.1
+
+# Data
+data:
+  category: "beauty"          # 数据集类别: beauty, games, sports
+  data_dir: "data/processed"  # 预处理数据目录
+  max_seq_length: 50          # 最大序列长度
+  num_workers: 8              # 数据加载进程数
+  use_text_features: true     # 是否使用文本特征
+  filter_train_items: true    # 评估时是否过滤训练集物品
+
+# Evaluation
+evaluation:
+  # 自动计算的指标 (全库评估)
+  metrics:
+    - "HR@5"          # Hit Rate @ 5
+    - "HR@10"         # Hit Rate @ 10
+    - "HR@20"         # Hit Rate @ 20
+    - "NDCG@5"        # Normalized DCG @ 5
+    - "NDCG@10"       # Normalized DCG @ 10 (主要指标)
+    - "NDCG@20"       # Normalized DCG @ 20
+    - "MRR"           # Mean Reciprocal Rank
+    - "Recall@10"     # Recall @ 10
+    - "Precision@10"  # Precision @ 10
+  
+  eval_interval: 1    # 每N个epoch评估一次
+
+# Quantum Computing (Optional)
+quantum:
+  enabled: false
+  backend: "qiskit"  # or "pennylane"
+
+  # For qiskit
+  qiskit:
+    provider: "IBMQ"
+    backend_name: "ibmq_qasm_simulator"  # or real quantum device
+    shots: 1024
+
+  # For pennylane
+  pennylane:
+    device: "default.qubit"
+    num_qubits: 8
+
+# Logging (新增: TensorBoard支持) ⭐
+logging:
+  use_tensorboard: true       # 启用TensorBoard日志 ⭐ 新功能
+  log_dir: "logs"             # TensorBoard日志目录
+  exp_name: null              # 实验名称 (null则自动生成)
+  save_dir: "checkpoints"     # 模型保存目录
+  
+  # 可选: Weights & Biases集成
+  wandb: false
+  wandb_project: "multimodal-recommender"
+
+# Ablation Study (新增: 消融实验配置) ⭐
+ablation:
+  no_disentangled: false      # 禁用解耦表征学习
+  no_causal: false            # 禁用因果推断模块
+  no_quantum: false           # 禁用量子启发编码器
+  no_multimodal: false        # 禁用多模态特征 (仅用物品嵌入)
+  text_only: false            # 仅使用文本特征
+  image_only: false           # 仅使用图像特征
+  
+  # 使用说明:
+  # 1. 命令行: --ablation_no_causal
+  # 2. 配置文件: ablation.no_causal = true
+  # 3. 批量运行: ./scripts/run_ablation_study.sh
+
+# Hardware
+hardware:
+  device: "cuda"              # 设备: cuda, cpu, mps(Apple Silicon)
+  num_workers: 4              # 数据加载进程数
+
+# Reproducibility
+seed: 42                      # 随机种子
+deterministic: true           # 确定性训练
+
+# ============================================================================
+# 使用示例 (Examples)
+# ============================================================================
+
+# 示例1: 使用配置文件训练
+# python train_amazon.py --config config_example.yaml
+
+# 示例2: 配置文件 + 命令行覆盖
+# python train_amazon.py --config config_example.yaml --epochs 100 --batch_size 512
+
+# 示例3: 带TensorBoard训练
+# python train_amazon.py --config config_example.yaml --use_tensorboard
+
+# 示例4: 消融实验 - 移除因果推断
+# python train_amazon.py --config config_example.yaml --ablation_no_causal
+
+# 示例5: 消融实验 - 仅文本特征
+# python train_amazon.py --config config_example.yaml --ablation_text_only
+
+# 示例6: 批量运行所有消融实验
+# ./scripts/run_ablation_study.sh beauty 50 256 cuda
+
+# 示例7: 查看TensorBoard
+# tensorboard --logdir=logs/
+
+# ============================================================================
+# 版本更新历史
+# ============================================================================
+# v0.4.0 (2025-11-01): ⭐ 重大优化
+# - ✅ 修复因果损失快速归零问题
+#   • 硬约束(ReLU) → 软约束(Smooth L1)
+#   • 降低causal权重: 0.5 → 0.2
+#   • 降低学习率: 1e-3 → 3e-4
+#   • 降低内部权重: 总权重从7.0降到1.5
+# - ✅ 优化训练稳定性
+#   • 主任务(rec_loss)占主导(90%)
+#   • 辅助任务持续提供梯度
+#   • 50个epoch都有训练意义
+# - ✅ 添加反事实特征多样性约束
+# - ✅ 添加周期性强化机制(每5个epoch)
+#
+# v0.3.0 (2025-10-31):
+# - ✅ 新增 TensorBoard 日志支持
+# - ✅ 新增 YAML 配置文件支持
+# - ✅ 新增消融实验框架
+# - ✅ 新增权重初始化
+# - ✅ 新增早停机制
+# - ✅ 新增学习率调度器
+#
+# v0.2.0 (2025-10-30):
+# - ✅ 标准多模态特征 (文本 + 图像)
+# - ✅ 完整损失函数系统 (9种损失)
+#
+# v0.1.0 (初始版本):
+# - 基础模型架构
