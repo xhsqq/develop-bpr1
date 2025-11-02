@@ -1,0 +1,174 @@
+# ============================================
+# 多模态时尚推荐系统配置文件
+# 基于三大改进：维度特定融合 + 量子编码 + SCM因果推断
+# ============================================
+
+# ============ 数据配置 ============
+data:
+  data_dir: "data/features"           # 特征数据目录
+  train_file: "train.pkl"             # 训练数据
+  val_file: "val.pkl"                 # 验证数据
+  test_file: "test.pkl"               # 测试数据
+
+  # 数据加载
+  batch_size: 256                     # 批大小
+  num_workers: 4                      # 数据加载线程数
+  shuffle: true                       # 是否打乱训练数据
+  pin_memory: true                    # 固定内存（GPU加速）
+
+  # 序列配置
+  max_seq_length: 50                  # 最大序列长度
+  min_seq_length: 2                   # 最小序列长度
+
+# ============ 模型架构 ============
+model:
+  # 模态维度配置
+  modality_dims:
+    text: 768                         # BERT文本特征维度
+    image: 2048                       # ResNet图像特征维度
+
+  # 嵌入维度
+  item_embed_dim: 256                 # 物品嵌入维度
+  hidden_dim: 512                     # 隐藏层维度
+
+  # ⭐ 改进1: 解耦表征配置
+  disentangled_dim: 64                # 每个解耦维度的大小（功能/美学/情感）
+  num_disentangled_dims: 3            # 解耦维度数量（固定为3）
+
+  # ⭐ 改进2: 量子编码器配置
+  num_interests: 16                   # 量子态数量（从4增加到16）
+  quantum_state_dim: 256              # 量子态维度
+  use_quantum_computing: false        # 是否使用真实量子计算（需要qiskit）
+
+  # 序列编码器
+  num_layers: 2                       # GRU层数
+  bidirectional: true                 # 是否双向
+
+  # Dropout
+  dropout: 0.1                        # Dropout比率
+
+# ============ 损失权重配置 ============
+loss:
+  # ⭐ 主损失：BPR（推荐损失）
+  # 自动权重为1.0，不需要配置
+
+  # ⭐ 辅助损失权重
+  alpha_recon: 0.1                    # VAE重构损失（解耦表征）
+  alpha_causal: 0.2                   # SCM因果损失（Phase 2启用）
+  alpha_diversity: 0.05               # 量子多样性损失
+  alpha_orthogonality: 0.05           # 兴趣正交性损失
+
+  # VAE损失内部权重
+  beta: 0.5                           # KL散度权重（β-VAE）
+  gamma: 1.0                          # 总相关性惩罚权重
+
+# ============ 训练配置 ============
+training:
+  # 基础配置
+  num_epochs: 50                      # 训练轮数
+  learning_rate: 0.001                # 学习率
+  weight_decay: 0.0001                # 权重衰减
+
+  # 学习率调度
+  lr_scheduler: "cosine"              # 学习率调度器（cosine/step/plateau）
+  lr_warmup_epochs: 5                 # 学习率预热轮数
+  lr_min: 0.00001                     # 最小学习率
+
+  # ⭐ 渐进式训练策略
+  # Phase 1 (epoch 1-10): alpha_causal=0.0 - 快速收敛基础模型
+  # Phase 2 (epoch 11+): alpha_causal=0.2 - 启用SCM因果推断
+  causal_warmup_epochs: 10            # 因果模块预热轮数
+
+  # KL退火（避免VAE后验坍塌）
+  kl_anneal_epochs: 20                # KL退火轮数
+
+  # 优化器
+  optimizer: "adam"                   # 优化器类型（adam/adamw/sgd）
+  grad_clip: 5.0                      # 梯度裁剪
+
+  # 早停
+  early_stopping: true                # 是否启用早停
+  patience: 10                        # 早停耐心值
+
+  # 检查点
+  save_every: 5                       # 每N轮保存一次模型
+  checkpoint_dir: "checkpoints"       # 检查点保存目录
+
+# ============ 评估配置 ============
+evaluation:
+  # Top-K指标
+  top_k: [5, 10, 20]                  # 评估的K值
+
+  # 评估指标
+  metrics:
+    - "recall"                        # 召回率
+    - "ndcg"                          # NDCG
+    - "hit_rate"                      # 命中率
+    - "mrr"                           # MRR
+
+  # 评估频率
+  eval_every: 1                       # 每N轮评估一次
+
+  # 测试时的批大小（可以更大以加速）
+  test_batch_size: 512
+
+# ============ 消融实验配置 ============
+ablation:
+  # 是否启用各个模块
+  enable_disentangled: true           # ⭐ 改进1: 维度特定多模态融合
+  enable_quantum: true                # ⭐ 改进2: 量子编码器
+  enable_causal: true                 # ⭐ 改进3: SCM因果推断
+
+  # 消融实验的损失权重覆盖
+  # 当禁用某个模块时，其对应的损失权重会自动设为0
+
+# ============ 日志和可视化 ============
+logging:
+  # TensorBoard
+  use_tensorboard: true               # 是否使用TensorBoard
+  log_dir: "runs"                     # TensorBoard日志目录
+
+  # 日志频率
+  log_every: 100                      # 每N个batch记录一次
+
+  # 可视化
+  visualize_attention: false          # 是否可视化注意力权重（较慢）
+  visualize_quantum: false            # 是否可视化量子态（较慢）
+
+# ============ 硬件配置 ============
+device:
+  use_gpu: true                       # 是否使用GPU
+  gpu_ids: [0]                        # GPU ID列表
+  mixed_precision: false              # 是否使用混合精度训练（需要GPU）
+
+# ============ 随机种子 ============
+seed: 42                              # 随机种子（可重复性）
+
+# ============ 高级配置 ============
+advanced:
+  # 温度参数（推荐打分）
+  temperature: 0.2                    # 固定温度参数
+
+  # 负采样
+  num_negatives: 4                    # BPR损失的负样本数量
+
+  # 因果推断配置
+  num_mc_samples: 10                  # Monte Carlo采样次数（不确定性量化）
+  num_ensembles: 5                    # 集成模型数量（不确定性量化）
+
+  # 量子测量
+  quantum_measurement_samples: 1      # 量子测量采样次数（默认1）
+
+# ============ 实验追踪 ============
+experiment:
+  name: "fashion-rec-improved"        # 实验名称
+  tags:
+    - "dimension-specific-fusion"     # 维度特定融合
+    - "quantum-16-states"             # 16个量子态
+    - "scm-causal"                    # SCM因果推断
+
+  notes: |
+    改进版本：
+    1. 先解耦再融合架构
+    2. 量子编码器优化（16态+相位+幺正性）
+    3. SCM因果推断（Pearl三步法）
