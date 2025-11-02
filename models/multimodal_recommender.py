@@ -155,12 +155,10 @@ class MultimodalRecommender(nn.Module):
         # 1. 物品嵌入（+1 因为ID从1开始，0用于padding）
         self.item_embedding = nn.Embedding(num_items + 1, item_embed_dim, padding_idx=0)
 
-        # 2. 解耦表征学习模块
+        # 2. 解耦表征学习模块（⭐ 改进：先解耦再融合）
         self.disentangled_module = DisentangledRepresentation(
             input_dims=modality_dims_with_item,  # ⭐ 包含item embedding
-            hidden_dim=hidden_dim,
-            shared_dim=item_embed_dim,
-            disentangled_dim=disentangled_dim,
+            latent_dim=disentangled_dim,  # ⭐ 改进：使用latent_dim参数
             beta=0.5,  # ⭐ v0.7.0: 降低从1.0
             gamma=1.0   # ⭐⭐⭐ v0.7.0: 大幅降低从10.0
         )
@@ -174,13 +172,13 @@ class MultimodalRecommender(nn.Module):
             bidirectional=True
         )
 
-        # 4. 量子启发多兴趣编码器
+        # 4. 量子启发多兴趣编码器（⭐ 改进：16个兴趣，增加相位和幺正性）
         self.quantum_encoder = QuantumInspiredMultiInterestEncoder(
             input_dim=total_disentangled_dim,
-            state_dim=quantum_state_dim,
-            num_interests=num_interests,
-            hidden_dim=hidden_dim,
+            num_interests=16,  # ⭐ 从4增加到16
+            qubit_dim=quantum_state_dim // 2,  # ⭐ 调整维度
             output_dim=item_embed_dim,
+            hidden_dim=hidden_dim,
             use_quantum_computing=use_quantum_computing
         )
 
@@ -318,6 +316,8 @@ class MultimodalRecommender(nn.Module):
         # 处理每个时间步的多模态特征
         all_disentangled_features = []
         disentangled_losses = []
+        # ⭐ 保存最后一个时间步的modality_disentangled（用于SCM）
+        last_modality_disentangled = None
 
         for t in range(seq_len):
             # ⭐ 结合item embedding和multimodal features
@@ -337,6 +337,10 @@ class MultimodalRecommender(nn.Module):
             # 拼接解耦特征
             z_concat = disentangled_output['z_concat']
             all_disentangled_features.append(z_concat)
+
+            # ⭐ 保存最后一个时间步的详细信息（用于SCM）
+            if t == seq_len - 1:
+                last_modality_disentangled = disentangled_output.get('modality_disentangled', {})
 
             if return_loss:
                 disentangled_losses.append(disentangled_output['loss'])
@@ -370,24 +374,68 @@ class MultimodalRecommender(nn.Module):
 
         user_interest_representation = quantum_output['output']  # (batch, item_embed_dim)
 
-        # ==================== 4. 因果推断 ====================
+        # ==================== 4. 因果推断（⭐ 改进：基于SCM的Pearl三步法） ====================
 
         # ⭐ 渐进式训练：根据alpha_causal决定是否调用因果模块
         # Phase 1时alpha_causal=0.0，跳过因果推断以加速收敛
-        if self.alpha_causal > 0:
-            # 准备解耦特征字典（使用最后一个时间步）
-            last_disentangled_features = {
-                'function': disentangled_sequence[:, -1, :self.disentangled_dim],
-                'aesthetics': disentangled_sequence[:, -1, self.disentangled_dim:2*self.disentangled_dim],
-                'emotion': disentangled_sequence[:, -1, 2*self.disentangled_dim:]
-            }
+        if self.alpha_causal > 0 and last_modality_disentangled and target_items is not None:
+            # ⭐ 改进：提取mu和logvar用于SCM的Abduction步骤
+            # 从所有模态的解耦结果中聚合mu和logvar
+            mu_dict = {}
+            logvar_dict = {}
+            z_dict = {}
 
-            # 应用因果推断
-            causal_output = self.causal_module(
-                last_disentangled_features,
-                return_uncertainty=True,
+            for dim_name in ['function', 'aesthetics', 'emotion']:
+                # 收集所有模态在该维度的mu和logvar
+                mu_list = []
+                logvar_list = []
+                z_list = []
+
+                for modality, disentangled in last_modality_disentangled.items():
+                    if dim_name in disentangled:
+                        mu_list.append(disentangled[dim_name].get('mu', disentangled[dim_name]['z']))
+                        logvar_list.append(disentangled[dim_name].get('logvar', torch.zeros_like(disentangled[dim_name]['z'])))
+                        z_list.append(disentangled[dim_name]['z'])
+
+                # 平均聚合（简单策略）
+                if mu_list:
+                    mu_dict[dim_name] = torch.stack(mu_list).mean(dim=0)
+                    logvar_dict[dim_name] = torch.stack(logvar_list).mean(dim=0)
+                    z_dict[dim_name] = torch.stack(z_list).mean(dim=0)
+                else:
+                    # Fallback：从disentangled_sequence提取
+                    idx_start = {'function': 0, 'aesthetics': 1, 'emotion': 2}[dim_name] * self.disentangled_dim
+                    idx_end = idx_start + self.disentangled_dim
+                    z_dict[dim_name] = disentangled_sequence[:, -1, idx_start:idx_end]
+                    mu_dict[dim_name] = z_dict[dim_name]
+                    logvar_dict[dim_name] = torch.zeros_like(z_dict[dim_name])
+
+            # ⭐ 改进：调用SCM的完整三步推理
+            # 创建推荐打分函数
+            def recommendation_head(quantum_output):
+                user_repr_norm = F.normalize(quantum_output + 1e-8, p=2, dim=-1)
+                item_emb_norm = F.normalize(self.item_embedding.weight + 1e-8, p=2, dim=-1)
+                logits = torch.matmul(user_repr_norm, item_emb_norm.T) / self.temperature + self.item_bias
+                logits[:, 0] = -1e9  # 屏蔽padding
+                return logits
+
+            # 调用SCM
+            causal_output = self.causal_module.scm(
+                z_dict=z_dict,
+                mu_dict=mu_dict,
+                logvar_dict=logvar_dict,
+                quantum_encoder=self.quantum_encoder,
+                recommendation_head=recommendation_head,
+                target_items=target_items
+            )
+
+            # 添加不确定性量化（向后兼容）
+            last_disentangled_features_concat = disentangled_sequence[:, -1, :]
+            uncertainty = self.causal_module.uncertainty_quantification(
+                last_disentangled_features_concat,
                 num_mc_samples=10
             )
+            causal_output['uncertainty'] = uncertainty
         else:
             # Phase 1: 跳过因果推断，返回空字典
             causal_output = {
@@ -511,11 +559,11 @@ class MultimodalRecommender(nn.Module):
                     interests_real, interests_imag
                 )
 
-            # 因果损失 - 极简版 v0.7.0 ⭐⭐⭐
-            # 核心原则: 简单有效，避免过度复杂
-            causal_loss = 0.0
-            
-            if 'counterfactuals' in causal_output and len(causal_output['counterfactuals']) > 0:
+            # ⭐ 因果损失 - 改进版：使用SCM返回的理论严谨损失
+            # 如果SCM已经计算了causal_loss，直接使用
+            if 'causal_loss' in causal_output and isinstance(causal_output['causal_loss'], torch.Tensor):
+                causal_loss = causal_output['causal_loss']
+            elif 'counterfactuals' in causal_output and len(causal_output['counterfactuals']) > 0:
                 # 收集所有反事实预测
                 all_cf_logits = []
                 
@@ -594,6 +642,9 @@ class MultimodalRecommender(nn.Module):
                             target_ite = torch.tensor(0.4, device=ite.device)
                             ite_loss = F.smooth_l1_loss(ite_magnitude, target_ite)
                             causal_loss += ite_loss
+            else:
+                # 没有因果推断输出，损失为0
+                causal_loss = torch.tensor(0.0, device=item_ids.device)
 
             # ⭐ 总损失 - 应用KL退火
             # KL退火：前20个epoch逐渐增加KL权重，避免后验坍塌

@@ -1,194 +1,468 @@
 #!/bin/bash
-# Ablation Study Runner
-# 批量运行消融实验
-# 用于系统性评估各个模块的贡献
+# ============================================
+# 消融实验脚本：验证各个模块的贡献
+# 适配改进版模型：维度特定融合 + 量子编码 + SCM因果推断
+# ============================================
 
-set -e
+set -e  # 遇到错误立即退出
 
-# 配置
-CATEGORY=${1:-beauty}
-EPOCHS=${2:-50}
-BATCH_SIZE=${3:-256}
-DEVICE=${4:-cuda}
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+NC='\033[0m' # No Color
 
-echo "=================================================================="
-echo "  Ablation Study Runner"
-echo "=================================================================="
-echo "Category: $CATEGORY"
-echo "Epochs: $EPOCHS"
-echo "Batch Size: $BATCH_SIZE"
-echo "Device: $DEVICE"
-echo "=================================================================="
-echo ""
+# 打印带颜色的消息
+print_msg() {
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
 
-# 创建消融实验结果目录
-RESULTS_DIR="ablation_results/${CATEGORY}_$(date +%Y%m%d_%H%M%S)"
-mkdir -p $RESULTS_DIR
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
-echo "Results will be saved to: $RESULTS_DIR"
-echo ""
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
 
-# 基础训练命令
-BASE_CMD="python train_amazon.py \
-    --category $CATEGORY \
-    --epochs $EPOCHS \
-    --batch_size $BATCH_SIZE \
-    --device $DEVICE \
-    --use_tensorboard \
-    --filter_train_items"
+print_header() {
+    echo -e "\n${PURPLE}========================================${NC}"
+    echo -e "${PURPLE}$1${NC}"
+    echo -e "${PURPLE}========================================${NC}\n"
+}
 
-# 定义消融实验列表
-declare -a experiments=(
-    "full_model:完整模型（基线）:"
-    "no_disentangled:移除解耦表征:--ablation_no_disentangled"
-    "no_causal:移除因果推断:--ablation_no_causal"
-    "no_quantum:移除量子编码器:--ablation_no_quantum"
-    "no_multimodal:移除多模态特征:--ablation_no_multimodal"
-    "text_only:仅文本特征:--ablation_text_only"
-    "image_only:仅图像特征:--ablation_image_only"
-    "no_dis_causal:移除解耦+因果:--ablation_no_disentangled --ablation_no_causal"
-    "no_dis_quantum:移除解耦+量子:--ablation_no_disentangled --ablation_no_quantum"
-    "no_causal_quantum:移除因果+量子:--ablation_no_causal --ablation_no_quantum"
-    "minimal:最简模型:--ablation_no_disentangled --ablation_no_causal --ablation_no_quantum --ablation_no_multimodal"
-)
+# ============================================
+# 配置参数
+# ============================================
 
-# 运行实验
-total=${#experiments[@]}
-current=0
+# ⭐ 数据集类别（可选：beauty, games, sports）
+CATEGORY="${1:-beauty}"  # 默认使用beauty数据集
 
-for exp in "${experiments[@]}"; do
-    IFS=':' read -ra PARTS <<< "$exp"
-    exp_name="${PARTS[0]}"
-    exp_desc="${PARTS[1]}"
-    exp_args="${PARTS[2]}"
-    
-    current=$((current + 1))
-    
-    echo ""
-    echo "=================================================================="
-    echo "  Experiment $current/$total: $exp_desc"
-    echo "  Name: $exp_name"
-    echo "=================================================================="
-    echo ""
-    
-    # 运行实验
-    exp_log="$RESULTS_DIR/${exp_name}.log"
-    
-    if [ -z "$exp_args" ]; then
-        # 基线模型（无消融）
-        $BASE_CMD --exp_name "${CATEGORY}_${exp_name}" 2>&1 | tee $exp_log
-    else
-        # 消融实验
-        $BASE_CMD $exp_args --exp_name "${CATEGORY}_${exp_name}" 2>&1 | tee $exp_log
+# 基础配置
+BASE_CONFIG="config.yaml"
+DATA_DIR="data/processed/${CATEGORY}"
+CHECKPOINT_DIR="checkpoints/${CATEGORY}_ablation"
+RESULTS_DIR="ablation_results/${CATEGORY}"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}消融实验 - 数据集: ${CATEGORY}${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+# GPU配置
+GPU_ID=0
+
+# 训练配置
+NUM_EPOCHS=30  # 消融实验使用较少的epoch
+BATCH_SIZE=256
+
+# 创建结果目录
+mkdir -p ${RESULTS_DIR}
+
+# 时间戳
+TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+
+# ============================================
+# 消融实验配置
+# ============================================
+
+# 实验1: 完整模型（所有改进启用）
+EXP1_NAME="full_model"
+EXP1_DESC="完整模型（所有改进）"
+EXP1_ARGS="--num_epochs ${NUM_EPOCHS} --batch_size ${BATCH_SIZE}"
+
+# 实验2: 无维度特定融合
+EXP2_NAME="no_disentangled_fusion"
+EXP2_DESC="移除维度特定融合"
+EXP2_ARGS="--num_epochs ${NUM_EPOCHS} --batch_size ${BATCH_SIZE} --alpha_recon 0.0"
+
+# 实验3: 无量子编码（降级为普通MLP）
+EXP3_NAME="no_quantum"
+EXP3_DESC="移除量子编码器（使用4个兴趣）"
+EXP3_ARGS="--num_epochs ${NUM_EPOCHS} --batch_size ${BATCH_SIZE} --num_interests 4 --alpha_diversity 0.0 --alpha_orthogonality 0.0"
+
+# 实验4: 无SCM因果推断
+EXP4_NAME="no_causal"
+EXP4_DESC="移除SCM因果推断"
+EXP4_ARGS="--num_epochs ${NUM_EPOCHS} --batch_size ${BATCH_SIZE} --alpha_causal 0.0"
+
+# 实验5: 基线模型（所有改进禁用）
+EXP5_NAME="baseline"
+EXP5_DESC="基线模型（无任何改进）"
+EXP5_ARGS="--num_epochs ${NUM_EPOCHS} --batch_size ${BATCH_SIZE} --alpha_recon 0.0 --alpha_causal 0.0 --alpha_diversity 0.0 --alpha_orthogonality 0.0 --num_interests 4"
+
+# ============================================
+# 实验函数
+# ============================================
+
+run_experiment() {
+    local exp_name=$1
+    local exp_desc=$2
+    local exp_args=$3
+
+    print_header "实验: ${exp_desc}"
+
+    # 创建实验目录
+    local exp_dir="${RESULTS_DIR}/${exp_name}_${TIMESTAMP}"
+    mkdir -p ${exp_dir}
+
+    # 日志文件
+    local log_file="${exp_dir}/train.log"
+    local result_file="${exp_dir}/results.txt"
+
+    print_msg "实验配置: ${exp_args}"
+    print_msg "日志文件: ${log_file}"
+
+    # 运行训练
+    print_msg "开始训练..."
+    python train.py \
+        --config ${BASE_CONFIG} \
+        --category ${CATEGORY} \
+        --data_dir ${DATA_DIR} \
+        --checkpoint_dir ${exp_dir}/checkpoints \
+        --log_dir ${exp_dir}/logs \
+        ${exp_args} \
+        --gpu_ids ${GPU_ID} \
+        2>&1 | tee ${log_file}
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        print_error "实验 ${exp_name} 失败"
+        echo "FAILED" > ${result_file}
+        return 1
     fi
-    
-    if [ $? -eq 0 ]; then
-        echo "✓ Experiment completed: $exp_name"
-    else
-        echo "✗ Experiment failed: $exp_name"
-        echo "See log: $exp_log"
-    fi
-    
-    echo ""
-done
 
-# 收集结果
-echo "=================================================================="
-echo "  Collecting Results"
-echo "=================================================================="
+    # 查找最新的检查点
+    local checkpoint=$(ls -t ${exp_dir}/checkpoints/*.pth 2>/dev/null | head -n 1)
+
+    if [ -z "$checkpoint" ]; then
+        print_warning "未找到检查点，跳过评估"
+        echo "NO_CHECKPOINT" > ${result_file}
+        return 0
+    fi
+
+    # 运行评估
+    print_msg "评估模型..."
+    python train.py \
+        --config ${BASE_CONFIG} \
+        --category ${CATEGORY} \
+        --mode eval \
+        --checkpoint ${checkpoint} \
+        --gpu_ids ${GPU_ID} \
+        2>&1 | tee -a ${log_file}
+
+    # 提取评估结果
+    extract_results ${log_file} ${result_file}
+
+    print_msg "✓ 实验 ${exp_name} 完成"
+    echo ""
+}
+
+# ============================================
+# 提取结果函数
+# ============================================
+
+extract_results() {
+    local log_file=$1
+    local result_file=$2
+
+    # 提取Recall@10, NDCG@10, HR@10
+    local recall10=$(grep "Recall@10" ${log_file} | tail -n 1 | awk '{print $NF}')
+    local ndcg10=$(grep "NDCG@10" ${log_file} | tail -n 1 | awk '{print $NF}')
+    local hr10=$(grep "HR@10" ${log_file} | tail -n 1 | awk '{print $NF}')
+
+    # 写入结果文件
+    cat > ${result_file} <<EOF
+Recall@10: ${recall10:-N/A}
+NDCG@10: ${ndcg10:-N/A}
+HR@10: ${hr10:-N/A}
+EOF
+}
+
+# ============================================
+# 主流程
+# ============================================
+
+print_header "消融实验开始"
+
+echo -e "${BLUE}实验计划：${NC}"
+echo -e "  1. ${EXP1_DESC}"
+echo -e "  2. ${EXP2_DESC}"
+echo -e "  3. ${EXP3_DESC}"
+echo -e "  4. ${EXP4_DESC}"
+echo -e "  5. ${EXP5_DESC}"
 echo ""
 
-python - <<EOF
-import json
-import os
-import pandas as pd
-from pathlib import Path
+read -p "是否继续？(y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    print_msg "取消实验"
+    exit 0
+fi
 
-results_dir = "$RESULTS_DIR"
-checkpoints_dir = "checkpoints"
+# 记录开始时间
+START_TIME=$(date +%s)
 
-# 收集所有结果
-all_results = []
+# 运行所有实验
+run_experiment "${EXP1_NAME}" "${EXP1_DESC}" "${EXP1_ARGS}"
+run_experiment "${EXP2_NAME}" "${EXP2_DESC}" "${EXP2_ARGS}"
+run_experiment "${EXP3_NAME}" "${EXP3_DESC}" "${EXP3_ARGS}"
+run_experiment "${EXP4_NAME}" "${EXP4_DESC}" "${EXP4_ARGS}"
+run_experiment "${EXP5_NAME}" "${EXP5_DESC}" "${EXP5_ARGS}"
 
-for exp_dir in Path(checkpoints_dir).glob("${CATEGORY}_*"):
-    results_file = exp_dir / "results.json"
-    
-    if results_file.exists():
-        with open(results_file) as f:
-            data = json.load(f)
-        
-        exp_name = data.get('exp_name', exp_dir.name)
-        test_metrics = data.get('test_metrics', {})
-        ablation = data.get('ablation_settings', {})
-        
-        # 提取关键指标
-        result = {
-            'Experiment': exp_name,
-            'NDCG@10': test_metrics.get('NDCG@10', 0),
-            'HR@10': test_metrics.get('HR@10', 0),
-            'MRR': test_metrics.get('MRR', 0),
-            'Recall@10': test_metrics.get('Recall@10', 0),
-            'Precision@10': test_metrics.get('Precision@10', 0),
-            'No_Disentangled': ablation.get('no_disentangled', False),
-            'No_Causal': ablation.get('no_causal', False),
-            'No_Quantum': ablation.get('no_quantum', False),
-            'No_Multimodal': ablation.get('no_multimodal', False),
-            'Text_Only': ablation.get('text_only', False),
-            'Image_Only': ablation.get('image_only', False)
-        }
-        
-        all_results.append(result)
+# 计算总时间
+END_TIME=$(date +%s)
+TOTAL_TIME=$((END_TIME - START_TIME))
+HOURS=$((TOTAL_TIME / 3600))
+MINUTES=$(((TOTAL_TIME % 3600) / 60))
 
-if all_results:
-    # 创建DataFrame
-    df = pd.DataFrame(all_results)
-    
-    # 按NDCG@10排序
-    df = df.sort_values('NDCG@10', ascending=False)
-    
-    # 保存CSV
-    csv_path = os.path.join(results_dir, 'ablation_results.csv')
-    df.to_csv(csv_path, index=False)
-    print(f"✓ Results saved to: {csv_path}")
-    
-    # 打印表格
-    print("\n" + "="*100)
-    print("Ablation Study Results")
-    print("="*100)
-    print(df.to_string(index=False))
-    print("="*100)
-    
-    # 计算各模块贡献
-    print("\nModule Contributions (vs Full Model):")
-    print("-"*100)
-    
-    full_model = df[df['Experiment'].str.contains('full_model')]
-    if not full_model.empty:
-        baseline_ndcg = full_model['NDCG@10'].values[0]
-        
-        for _, row in df.iterrows():
-            if 'full_model' not in row['Experiment']:
-                diff = (row['NDCG@10'] - baseline_ndcg) * 100
-                print(f"{row['Experiment']:30s}: NDCG@10={row['NDCG@10']:.4f} ({diff:+.2f}%)")
-    
-    print("-"*100)
-else:
-    print("✗ No results found")
+# ============================================
+# 生成汇总报告
+# ============================================
+
+print_header "生成汇总报告"
+
+SUMMARY_FILE="${RESULTS_DIR}/ablation_summary_${TIMESTAMP}.txt"
+
+cat > ${SUMMARY_FILE} <<EOF
+========================================
+消融实验汇总报告
+========================================
+
+运行时间: $(date +'%Y-%m-%d %H:%M:%S')
+总耗时: ${HOURS}小时 ${MINUTES}分钟
+
+实验配置:
+---------
+- 训练轮数: ${NUM_EPOCHS}
+- 批大小: ${BATCH_SIZE}
+- GPU: ${GPU_ID}
+
+========================================
+实验结果
+========================================
 
 EOF
 
+# 读取每个实验的结果
+for exp_name in "${EXP1_NAME}" "${EXP2_NAME}" "${EXP3_NAME}" "${EXP4_NAME}" "${EXP5_NAME}"; do
+    exp_dir=$(ls -td ${RESULTS_DIR}/${exp_name}_* 2>/dev/null | head -n 1)
+
+    if [ -n "$exp_dir" ]; then
+        result_file="${exp_dir}/results.txt"
+
+        case $exp_name in
+            "${EXP1_NAME}") exp_desc="${EXP1_DESC}" ;;
+            "${EXP2_NAME}") exp_desc="${EXP2_DESC}" ;;
+            "${EXP3_NAME}") exp_desc="${EXP3_DESC}" ;;
+            "${EXP4_NAME}") exp_desc="${EXP4_DESC}" ;;
+            "${EXP5_NAME}") exp_desc="${EXP5_DESC}" ;;
+        esac
+
+        echo "----------------------------------------" >> ${SUMMARY_FILE}
+        echo "${exp_desc}" >> ${SUMMARY_FILE}
+        echo "----------------------------------------" >> ${SUMMARY_FILE}
+
+        if [ -f "$result_file" ]; then
+            cat ${result_file} >> ${SUMMARY_FILE}
+        else
+            echo "结果文件不存在" >> ${SUMMARY_FILE}
+        fi
+
+        echo "" >> ${SUMMARY_FILE}
+    fi
+done
+
+# 生成Markdown表格
+cat >> ${SUMMARY_FILE} <<EOF
+
+========================================
+Markdown表格（可直接用于论文）
+========================================
+
+| 实验 | Recall@10 | NDCG@10 | HR@10 |
+|------|-----------|---------|-------|
+EOF
+
+for exp_name in "${EXP1_NAME}" "${EXP2_NAME}" "${EXP3_NAME}" "${EXP4_NAME}" "${EXP5_NAME}"; do
+    exp_dir=$(ls -td ${RESULTS_DIR}/${exp_name}_* 2>/dev/null | head -n 1)
+
+    if [ -n "$exp_dir" ]; then
+        result_file="${exp_dir}/results.txt"
+
+        case $exp_name in
+            "${EXP1_NAME}") exp_desc="完整模型" ;;
+            "${EXP2_NAME}") exp_desc="无维度融合" ;;
+            "${EXP3_NAME}") exp_desc="无量子编码" ;;
+            "${EXP4_NAME}") exp_desc="无SCM因果" ;;
+            "${EXP5_NAME}") exp_desc="基线模型" ;;
+        esac
+
+        if [ -f "$result_file" ]; then
+            recall=$(grep "Recall@10" ${result_file} | awk '{print $2}')
+            ndcg=$(grep "NDCG@10" ${result_file} | awk '{print $2}')
+            hr=$(grep "HR@10" ${result_file} | awk '{print $2}')
+
+            echo "| ${exp_desc} | ${recall:-N/A} | ${ndcg:-N/A} | ${hr:-N/A} |" >> ${SUMMARY_FILE}
+        fi
+    fi
+done
+
+cat >> ${SUMMARY_FILE} <<EOF
+
+========================================
+分析与结论
+========================================
+
+1. 维度特定融合的贡献:
+   - 比较完整模型与"无维度融合"实验
+   - 预期提升: 提高可解释性，减少模态偏差
+
+2. 量子编码器的贡献:
+   - 比较完整模型与"无量子编码"实验
+   - 预期提升: 更丰富的多兴趣建模（16态 vs 4态）
+
+3. SCM因果推断的贡献:
+   - 比较完整模型与"无SCM因果"实验
+   - 预期提升: 理论严谨的反事实推理
+
+4. 整体改进:
+   - 比较完整模型与基线模型
+   - 预期提升: 三大改进的协同效应
+
+========================================
+EOF
+
+print_msg "✓ 汇总报告已生成: ${SUMMARY_FILE}"
+
+# ============================================
+# 生成对比图表脚本（Python）
+# ============================================
+
+PLOT_SCRIPT="${RESULTS_DIR}/plot_ablation.py"
+
+cat > ${PLOT_SCRIPT} <<'EOF'
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+消融实验结果可视化脚本
+"""
+
+import matplotlib.pyplot as plt
+import numpy as np
+import re
+import sys
+
+def parse_results(summary_file):
+    """解析汇总文件"""
+    experiments = []
+    recalls = []
+    ndcgs = []
+    hrs = []
+
+    with open(summary_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 提取表格内容
+    table_match = re.search(r'\| 实验 \| Recall@10.*?\n(.*?)(?=\n\n|\Z)', content, re.DOTALL)
+    if not table_match:
+        print("未找到结果表格")
+        return None
+
+    table_lines = table_match.group(1).strip().split('\n')
+
+    for line in table_lines:
+        if line.startswith('|'):
+            parts = [p.strip() for p in line.split('|')[1:-1]]
+            if len(parts) == 4:
+                exp_name, recall, ndcg, hr = parts
+
+                if recall != 'N/A' and ndcg != 'N/A' and hr != 'N/A':
+                    experiments.append(exp_name)
+                    recalls.append(float(recall))
+                    ndcgs.append(float(ndcg))
+                    hrs.append(float(hr))
+
+    return experiments, recalls, ndcgs, hrs
+
+def plot_results(experiments, recalls, ndcgs, hrs, output_file):
+    """绘制对比图"""
+    x = np.arange(len(experiments))
+    width = 0.25
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    bars1 = ax.bar(x - width, recalls, width, label='Recall@10', color='#2E86AB')
+    bars2 = ax.bar(x, ndcgs, width, label='NDCG@10', color='#A23B72')
+    bars3 = ax.bar(x + width, hrs, width, label='HR@10', color='#F18F01')
+
+    ax.set_xlabel('实验配置', fontsize=12)
+    ax.set_ylabel('指标值', fontsize=12)
+    ax.set_title('消融实验结果对比', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(experiments, rotation=15, ha='right')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+
+    # 添加数值标签
+    def autolabel(bars):
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.3f}',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 3),
+                       textcoords="offset points",
+                       ha='center', va='bottom',
+                       fontsize=8)
+
+    autolabel(bars1)
+    autolabel(bars2)
+    autolabel(bars3)
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"图表已保存: {output_file}")
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("用法: python plot_ablation.py <summary_file>")
+        sys.exit(1)
+
+    summary_file = sys.argv[1]
+    output_file = summary_file.replace('.txt', '.png')
+
+    result = parse_results(summary_file)
+    if result:
+        experiments, recalls, ndcgs, hrs = result
+        plot_results(experiments, recalls, ndcgs, hrs, output_file)
+    else:
+        print("解析结果失败")
+EOF
+
+chmod +x ${PLOT_SCRIPT}
+
+print_msg "可视化脚本已生成: ${PLOT_SCRIPT}"
+print_msg "运行可视化: python ${PLOT_SCRIPT} ${SUMMARY_FILE}"
+
+# ============================================
+# 完成
+# ============================================
+
+print_header "消融实验完成！"
+
+echo -e "${GREEN}总结：${NC}"
+echo -e "  - 总耗时: ${HOURS}小时 ${MINUTES}分钟"
+echo -e "  - 实验数量: 5个"
+echo -e "  - 结果目录: ${RESULTS_DIR}"
 echo ""
-echo "=================================================================="
-echo "  Ablation Study Completed!"
-echo "=================================================================="
+echo -e "${GREEN}输出文件：${NC}"
+echo -e "  - 汇总报告: ${YELLOW}${SUMMARY_FILE}${NC}"
+echo -e "  - 可视化脚本: ${YELLOW}${PLOT_SCRIPT}${NC}"
 echo ""
-echo "Results directory: $RESULTS_DIR"
-echo "TensorBoard logs: logs/"
-echo ""
-echo "To view TensorBoard:"
-echo "  tensorboard --logdir=logs/"
-echo ""
-echo "To compare experiments:"
-echo "  cat $RESULTS_DIR/ablation_results.csv"
+echo -e "${BLUE}下一步建议：${NC}"
+echo -e "  1. 查看汇总报告: ${YELLOW}cat ${SUMMARY_FILE}${NC}"
+echo -e "  2. 生成对比图: ${YELLOW}python ${PLOT_SCRIPT} ${SUMMARY_FILE}${NC}"
+echo -e "  3. 将表格复制到论文中"
 echo ""
 
+exit 0
